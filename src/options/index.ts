@@ -50,12 +50,21 @@ function save(): void {
 document.addEventListener("DOMContentLoaded", load);
 $("save").addEventListener("click", save);
 $("test").addEventListener("click", () => {
-  // Same as popup: create directly to avoid service-worker cold-start delay.
-  chrome.notifications.create("tb-test", {
-    type: "basic",
-    iconUrl: "icons/icon128.png",
-    title: "Toast Bridge",
-    message: "Test notification — if you see this, the extension works.",
-    priority: 0,
-  });
+  // Unique id + absolute icon URL + error capture (see popup for details).
+  const id = `tb-test-${Date.now()}`;
+  chrome.notifications.create(
+    id,
+    {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+      title: "Toast Bridge",
+      message: "Test notification — if you see this, the extension works.",
+      priority: 0,
+    },
+    () => {
+      if (chrome.runtime.lastError) {
+        console.error("toast-bridge test notify failed:", chrome.runtime.lastError.message);
+      }
+    },
+  );
 });

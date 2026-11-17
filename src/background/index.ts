@@ -27,11 +27,15 @@ function showNotification(
   if (tabId !== undefined) tabByNotification.set(id, tabId);
   chrome.notifications.create(id, {
     type: "basic",
-    iconUrl: "icons/icon128.png",
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
     title,
     message: body,
     priority: kind === "need" ? 2 : 0,
     requireInteraction: kind === "need",
+  }, () => {
+    if (chrome.runtime.lastError) {
+      console.error("toast-bridge notify failed:", chrome.runtime.lastError.message);
+    }
   });
 }
 
