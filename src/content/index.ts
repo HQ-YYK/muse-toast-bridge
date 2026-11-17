@@ -33,6 +33,16 @@ import { isWorking } from "./working";
   // Approval notifications are rate-limited: at most one per 30s.
   let lastApprovalAt = 0;
 
+  // Debug logging: flips on with a `?tbdebug` query on the muse page, or by
+  // setting localStorage.__tbDebug = "1". Logs every state change so we can
+  // tell "not detected" apart from "detected but suppressed by shouldNotify".
+  const DEBUG =
+    location.search.includes("tbdebug") ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("__tbDebug") === "1");
+  function dbg(...args: unknown[]): void {
+    if (DEBUG) console.log("[toast-bridge]", ...args);
+  }
+
   function shouldNotify(): boolean {
     if (!settings.enabled) return false;
     if (!settings.onlyWhenHidden) return true;
@@ -67,6 +77,7 @@ import { isWorking } from "./working";
     if (nowWorking && !working) {
       working = true;
       workingSince = Date.now();
+      dbg("working started");
       if (settleTimer !== null) {
         clearTimeout(settleTimer);
         settleTimer = null;
@@ -77,6 +88,7 @@ import { isWorking } from "./working";
         if (isWorking(settings.workingSelectors)) return; // restarted
         working = false;
         const ranSeconds = (Date.now() - workingSince) / 1000;
+        dbg("working stopped", { ranSeconds, notifyDone: settings.notifyDone, min: settings.minWorkingSeconds });
         if (
           settings.notifyDone &&
           ranSeconds >= (settings.minWorkingSeconds || 0)
@@ -95,6 +107,7 @@ import { isWorking } from "./working";
       if (now - lastApprovalAt < 30000) return;
       if (findApproval(settings.approvalSelectors)) {
         lastApprovalAt = now;
+        dbg("approval detected");
         notify(
           "need",
           "Muse is waiting for you",
@@ -126,4 +139,5 @@ import { isWorking } from "./working";
   }
   setInterval(scan, 1000);
   scan();
+  dbg("loaded; settings =", settings, "; onlyWhenHidden =", settings.onlyWhenHidden);
 })();
