@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Toast Bridge options</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 24px; color: #1f2937; }
+    h1 { font-size: 20px; }
+    label { display: block; margin: 12px 0; }
+    .hint { color: #6b7280; font-size: 13px; margin: -6px 0 12px 22px; }
+    textarea { width: 100%; height: 72px; font-family: monospace; font-size: 13px; }
+    input[type="number"] { width: 72px; }
+    button { margin-top: 12px; padding: 6px 14px; }
+    #status { color: #059669; margin-left: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Toast Bridge</h1>
+  <label><input type="checkbox" id="enabled"> Enable notifications</label>
+  <label><input type="checkbox" id="notifyDone"> Notify when Muse finishes a task</label>
+  <label><input type="checkbox" id="notifyApproval"> Notify when Muse waits for approval or an answer</label>
+  <label><input type="checkbox" id="onlyWhenHidden"> Only notify when the Muse tab is not in focus</label>
+  <p class="hint">If you are already looking at the tab, you don't need a popup.</p>
+  <label>Only notify for tasks that ran at least
+    <input type="number" id="minWorkingSeconds" min="0" max="3600"> seconds
+  </label>
+  <p class="hint">Short replies stay quiet; long tasks pop. Default 15.</p>
+  <label>Extra "Muse is working" selectors (one CSS selector per line)</label>
+  <textarea id="workingSelectors" placeholder="e.g.&#10;[data-testid=&quot;stop-button&quot;]"></textarea>
+  <p class="hint">If a Muse update breaks detection, put the selector of the
+  working indicator (spinner, stop button) here instead of waiting for a new release.</p>
+  <div>
+    <button id="save">Save</button>
+    <button id="test">Send test notification</button>
+    <span id="status"></span>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
