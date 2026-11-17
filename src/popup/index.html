@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: system-ui, sans-serif; width: 240px; margin: 12px; color: #1f2937; }
+    h1 { font-size: 15px; margin: 0 0 10px; }
+    label { display: block; margin: 8px 0; font-size: 13px; }
+    button { margin: 6px 6px 0 0; padding: 5px 10px; }
+    .foot { margin-top: 12px; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>Toast Bridge</h1>
+  <label><input type="checkbox" id="enabled"> Enable notifications</label>
+  <label><input type="checkbox" id="notifyDone"> Notify on task finish</label>
+  <label><input type="checkbox" id="notifyApproval"> Notify when approval is needed</label>
+  <div>
+    <button id="test">Test notification</button>
+    <button id="options">Options</button>
+  </div>
+  <p class="foot">Watches muse.ai and pops a native system notification when
+  Muse finishes a long task or waits for you.</p>
+  <script type="module" src="./index.ts"></script>
+</body>
+</html>

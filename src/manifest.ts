@@ -1,0 +1,39 @@
+import type { ManifestV3Export } from "@crxjs/vite-plugin";
+
+const manifest: ManifestV3Export = {
+  manifest_version: 3,
+  name: "Toast Bridge — Muse notifier",
+  version: "1.1.0",
+  description:
+    "Pops a native system notification when Muse finishes a long task in the browser or waits for your approval. No account, no server, nothing leaves your machine.",
+  action: {
+    default_popup: "src/popup/index.html",
+    default_title: "Toast Bridge",
+    default_icon: {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png",
+    },
+  },
+  background: {
+    service_worker: "src/background/index.ts",
+    type: "module",
+  },
+  options_page: "src/options/index.html",
+  content_scripts: [
+    {
+      js: ["src/content/index.ts"],
+      matches: ["https://muse.ai/*", "https://*.muse.ai/*"],
+      run_at: "document_idle",
+    },
+  ],
+  icons: {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png",
+  },
+  host_permissions: ["https://muse.ai/*", "https://*.muse.ai/*"],
+  permissions: ["notifications", "storage", "tabs"],
+};
+
+export default manifest;
