@@ -50,5 +50,12 @@ function save(): void {
 document.addEventListener("DOMContentLoaded", load);
 $("save").addEventListener("click", save);
 $("test").addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "toast-bridge-test" });
+  // Same as popup: create directly to avoid service-worker cold-start delay.
+  chrome.notifications.create("tb-test", {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title: "Toast Bridge",
+    message: "Test notification — if you see this, the extension works.",
+    priority: 0,
+  });
 });

@@ -1,12 +1,17 @@
 // "Muse is working" detection.
 //
-// muse.ai is Meta's agent ("Hatch"). It replaces the composer's send button
-// with a stop / "generating" control while a task runs, and may show a spinner
-// or progress step list. We treat any of these as "working":
+// From the real muse.ai DOM (2026-11), the agent's activity bubble carries a
+// status icon whose container has a Tailwind class of the form
+// `bg-status-working-tint` (working) or `bg-status-success-tint` (done). The
+// status text also lives in a `title` attribute ("让智能体安装依赖并构建打包"
+// while working, "已完成 · …" when done).
 //
-//   1. A visible Stop / "Stop generating" button (primary cross-version signal).
-//   2. A visible generating/spinner indicator (secondary signal).
-//   3. Any user-supplied selector from options (escape hatch for redesigns).
+// Reliable signals, in priority order:
+//   1. A visible element whose class contains a Muse status token
+//      (status-working / status-running / status-thinking / status-generating).
+//   2. A Stop / "Stop generating" button (older layout).
+//   3. A generating/thinking/working indicator (spinner / live region).
+//   4. Any user-supplied selector from options (escape hatch).
 
 import { buttonLabel, isVisible, normalize, visibleButtons } from "./dom";
 
@@ -28,6 +33,27 @@ const GENERATING_PATTERNS = [
   /思考中/,
   /进行中/,
 ];
+
+// Tailwind status tokens observed on Muse's agent activity icon container.
+const STATUS_CLASS_PATTERNS = [
+  /status-working/,
+  /status-running/,
+  /status-thinking/,
+  /status-generating/,
+  /status-in-progress/,
+];
+
+/** A visible element whose class names include a Muse "busy" status token. */
+export function hasStatusClassIndicator(): boolean {
+  const nodes = document.querySelectorAll<Element>("[class]");
+  for (const el of Array.from(nodes)) {
+    const cls = el.getAttribute("class") ?? "";
+    if (STATUS_CLASS_PATTERNS.some((re) => re.test(cls))) {
+      if (isVisible(el)) return true;
+    }
+  }
+  return false;
+}
 
 export function hasStopButton(): boolean {
   for (const el of visibleButtons()) {
@@ -66,6 +92,7 @@ export function hasCustomWorkingIndicator(selectors: string[]): boolean {
 
 export function isWorking(selectors: string[]): boolean {
   return (
+    hasStatusClassIndicator() ||
     hasStopButton() ||
     hasGeneratingIndicator() ||
     hasCustomWorkingIndicator(selectors)
