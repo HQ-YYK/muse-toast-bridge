@@ -1,6 +1,10 @@
 node_modules/
 dist/
+release/
 *.zip
+*.crx
+key.pem
+dist.pem
 .DS_Store
 *.log
 .pnpm-store
