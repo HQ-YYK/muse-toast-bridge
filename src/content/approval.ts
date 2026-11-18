@@ -55,25 +55,30 @@ const APPROVAL_SUBSTRINGS = [
 ];
 
 /**
- * A visible `data-copy-exclude` block containing at least one dashed-border
- * choice button. This is Muse's "here are your options, pick one" prompt.
+ * A visible `data-copy-exclude` block containing at least one *dashed-border*
+ * choice button. Muse's "here are your options, pick one" prompt renders its
+ * option buttons with `border-dashed` (and they sit in a `data-copy-exclude`
+ * container). We require the dashed border AND at least two such buttons so a
+ * single stray action button (copy/like/regenerate) or a stale historical
+ * decision block doesn't false-positive.
  */
 function hasDecisionPrompt(): boolean {
   const containers = document.querySelectorAll<Element>("[data-copy-exclude]");
   for (const c of Array.from(containers)) {
     if (!isVisible(c)) continue;
     const choices = c.querySelectorAll<Element>("button");
-    let visibleChoice = false;
+    const dashed: Element[] = [];
     for (const b of Array.from(choices)) {
       if (!isVisible(b)) continue;
       const label = normalize(buttonLabel(b));
-      // Ignore buttons that are just "open tab" / media actions.
       if (label.length === 0 || label.length > 80) continue;
       if (label === "打开标签页" || label === "打开浏览器标签页") continue;
-      visibleChoice = true;
-      break;
+      const cls = b.getAttribute("class") ?? "";
+      if (cls.includes("border-dashed")) dashed.push(b);
     }
-    if (visibleChoice) return true;
+    // Require at least two dashed-border option buttons: Muse's decision
+    // prompt always presents multiple choices, never a single button.
+    if (dashed.length >= 2) return true;
   }
   return false;
 }

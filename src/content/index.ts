@@ -8,7 +8,7 @@
 
 import { DEFAULT_SETTINGS, type Settings } from "../shared/settings";
 import { findApproval } from "./approval";
-import { isWorking } from "./working";
+import { hasFinishedStatus, isWorking } from "./working";
 
 (() => {
   if (window.__toastBridgeLoaded) return;
@@ -69,14 +69,36 @@ import { isWorking } from "./working";
   let settleTimer: number | null = null;
   const SETTLE_MS = 2000; // idle must persist 2s before we call it "done"
 
+  // A task can finish two ways:
+  //   1. working → idle (stop button / spinner gone) — the "done" edge below.
+  //   2. an explicit "finished" status bubble appears (status-success etc.).
+  // We track a finishedSince so case 2 can also fire "done" after it settles.
+  let finishedSince = 0;
+
+  function fireDone(ranSeconds: number): void {
+    dbg("fireDone", { ranSeconds });
+    if (
+      settings.notifyDone &&
+      ranSeconds >= (settings.minWorkingSeconds || 0)
+    ) {
+      notify(
+        "done",
+        "Muse finished",
+        `Muse finished a task in "${document.title || "Muse"}".`,
+      );
+    }
+  }
+
   function scan(): void {
     if (!settings.enabled) return;
 
     const nowWorking = isWorking(settings.workingSelectors);
+    const nowFinished = hasFinishedStatus();
 
     if (nowWorking && !working) {
       working = true;
       workingSince = Date.now();
+      finishedSince = 0;
       dbg("working started");
       if (settleTimer !== null) {
         clearTimeout(settleTimer);
@@ -88,18 +110,26 @@ import { isWorking } from "./working";
         if (isWorking(settings.workingSelectors)) return; // restarted
         working = false;
         const ranSeconds = (Date.now() - workingSince) / 1000;
-        dbg("working stopped", { ranSeconds, notifyDone: settings.notifyDone, min: settings.minWorkingSeconds });
-        if (
-          settings.notifyDone &&
-          ranSeconds >= (settings.minWorkingSeconds || 0)
-        ) {
-          notify(
-            "done",
-            "Muse finished",
-            `Muse finished a task in "${document.title || "Muse"}".`,
-          );
-        }
+        dbg("working stopped", { ranSeconds });
+        fireDone(ranSeconds);
       }, SETTLE_MS);
+    }
+
+    // Explicit "finished" bubble (case 2): start timing when a finished status
+    // appears while we aren't already "working", and fire once it has settled.
+    if (nowFinished && !working) {
+      if (finishedSince === 0) {
+        finishedSince = Date.now();
+        dbg("finished status seen");
+      }
+      const ranSeconds = (Date.now() - finishedSince) / 1000;
+      // Fire after the finished bubble has been visible for a settle period.
+      if (ranSeconds >= SETTLE_MS / 1000) {
+        fireDone(ranSeconds);
+        finishedSince = 0; // avoid re-firing on every scan
+      }
+    } else if (!nowFinished) {
+      finishedSince = 0;
     }
 
     if (settings.notifyApproval) {

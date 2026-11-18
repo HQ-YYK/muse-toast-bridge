@@ -35,7 +35,9 @@ const GENERATING_PATTERNS = [
 ];
 
 // Tailwind status tokens observed on Muse's agent activity icon container.
-const STATUS_CLASS_PATTERNS = [
+// "working" tokens mean a task is running; "success"/"done" tokens mean a task
+// has finished. We only treat the *working* ones as "busy".
+const STATUS_WORKING_PATTERNS = [
   /status-working/,
   /status-running/,
   /status-thinking/,
@@ -43,12 +45,37 @@ const STATUS_CLASS_PATTERNS = [
   /status-in-progress/,
 ];
 
+// "finished" tokens — used to detect completion directly (see hasFinishedStatus).
+const STATUS_FINISHED_PATTERNS = [
+  /status-success/,
+  /status-done/,
+  /status-complete/,
+  /status-completed/,
+];
+
 /** A visible element whose class names include a Muse "busy" status token. */
 export function hasStatusClassIndicator(): boolean {
   const nodes = document.querySelectorAll<Element>("[class]");
   for (const el of Array.from(nodes)) {
     const cls = el.getAttribute("class") ?? "";
-    if (STATUS_CLASS_PATTERNS.some((re) => re.test(cls))) {
+    if (STATUS_WORKING_PATTERNS.some((re) => re.test(cls))) {
+      if (isVisible(el)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A visible element whose class names include a Muse "finished" status token.
+ * Exposed so the caller can drive "done" from an explicit success state instead
+ * of relying solely on the working→idle edge (which misses when the working
+ * bubble is hidden in a collapsed container, so `isVisible` never saw it).
+ */
+export function hasFinishedStatus(): boolean {
+  const nodes = document.querySelectorAll<Element>("[class]");
+  for (const el of Array.from(nodes)) {
+    const cls = el.getAttribute("class") ?? "";
+    if (STATUS_FINISHED_PATTERNS.some((re) => re.test(cls))) {
       if (isVisible(el)) return true;
     }
   }
