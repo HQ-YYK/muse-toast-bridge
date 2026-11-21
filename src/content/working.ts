@@ -1,88 +1,57 @@
-// "Muse is working" detection.
+// "Muse is working" / "Muse finished" detection.
 //
 // From the real muse.ai DOM (2026-11), the agent's activity bubble carries a
-// status icon whose container has a Tailwind class of the form
-// `bg-status-working-tint` (working) or `bg-status-success-tint` (done). The
-// status text also lives in a `title` attribute ("让智能体安装依赖并构建打包"
-// while working, "已完成 · …" when done).
+// status icon whose container has a Tailwind class like
+// `bg-status-working-tint` (working) or `bg-status-success-tint` (done).
 //
-// Reliable signals, in priority order:
-//   1. A visible element whose class contains a Muse status token
-//      (status-working / status-running / status-thinking / status-generating).
+// Working signals, in priority order:
+//   1. A visible element whose class contains a "busy" status token.
 //   2. A Stop / "Stop generating" button (older layout).
-//   3. A generating/thinking/working indicator (spinner / live region).
+//   3. A short spinner/status label that says generating/thinking/...
 //   4. Any user-supplied selector from options (escape hatch).
+//
+// Finished signal: visible elements with a "success" status token. Every past
+// task in the chat history has one, so the caller must only react to elements
+// it has not seen before (see index.ts), never to "any is visible".
 
-import { buttonLabel, isVisible, normalize, visibleButtons } from "./dom";
+import { buttonLabel, normalize, visibleAll, visibleButtons, visibleCustom } from "./dom";
 
-const STOP_PATTERNS = [
-  /^stop( generating)?$/,
-  /^停止$/,
-  /^停止生成$/,
-  /^pause$/,
-];
+const STATUS_WORKING_SELECTOR = [
+  "status-working",
+  "status-running",
+  "status-thinking",
+  "status-generating",
+  "status-in-progress",
+].map((t) => `[class*="${t}"]`).join(", ");
+
+const STATUS_FINISHED_SELECTOR = [
+  "status-success",
+  "status-done",
+  "status-complete",
+].map((t) => `[class*="${t}"]`).join(", ");
+
+const STOP_PATTERNS = [/^stop( generating)?$/, /^停止$/, /^停止生成$/, /^pause$/];
 
 const GENERATING_PATTERNS = [
-  /generating/i,
-  /thinking/i,
-  /working/i,
-  /running/i,
-  /in progress/i,
+  /generating/,
+  /thinking/,
+  /working/,
+  /running/,
+  /in progress/,
   /处理中/,
   /生成中/,
   /思考中/,
   /进行中/,
 ];
 
-// Tailwind status tokens observed on Muse's agent activity icon container.
-// "working" tokens mean a task is running; "success"/"done" tokens mean a task
-// has finished. We only treat the *working* ones as "busy".
-const STATUS_WORKING_PATTERNS = [
-  /status-working/,
-  /status-running/,
-  /status-thinking/,
-  /status-generating/,
-  /status-in-progress/,
-];
+const INDICATOR_SELECTOR =
+  '[role="status"], [aria-live="polite"], [aria-live="assertive"], [data-testid*="generat"], [data-testid*="spinner"], [class*="spinner"], [class*="loading"]';
 
-// "finished" tokens — used to detect completion directly (see hasFinishedStatus).
-const STATUS_FINISHED_PATTERNS = [
-  /status-success/,
-  /status-done/,
-  /status-complete/,
-  /status-completed/,
-];
+// A spinner label is short ("Thinking…"). Longer text is a message body that
+// merely mentions "running" etc., which must not count as busy.
+const MAX_INDICATOR_TEXT = 30;
 
-/** A visible element whose class names include a Muse "busy" status token. */
-export function hasStatusClassIndicator(): boolean {
-  const nodes = document.querySelectorAll<Element>("[class]");
-  for (const el of Array.from(nodes)) {
-    const cls = el.getAttribute("class") ?? "";
-    if (STATUS_WORKING_PATTERNS.some((re) => re.test(cls))) {
-      if (isVisible(el)) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * A visible element whose class names include a Muse "finished" status token.
- * Exposed so the caller can drive "done" from an explicit success state instead
- * of relying solely on the working→idle edge (which misses when the working
- * bubble is hidden in a collapsed container, so `isVisible` never saw it).
- */
-export function hasFinishedStatus(): boolean {
-  const nodes = document.querySelectorAll<Element>("[class]");
-  for (const el of Array.from(nodes)) {
-    const cls = el.getAttribute("class") ?? "";
-    if (STATUS_FINISHED_PATTERNS.some((re) => re.test(cls))) {
-      if (isVisible(el)) return true;
-    }
-  }
-  return false;
-}
-
-export function hasStopButton(): boolean {
+function hasStopButton(): boolean {
   for (const el of visibleButtons()) {
     const label = normalize(buttonLabel(el));
     if (label.length > 40) continue;
@@ -91,37 +60,25 @@ export function hasStopButton(): boolean {
   return false;
 }
 
-export function hasGeneratingIndicator(): boolean {
-  // Spinners / status text that mention generating.
-  const nodes = document.querySelectorAll<Element>(
-    '[role="status"], [aria-live="polite"], [aria-live="assertive"], [data-testid*="generat"], [data-testid*="spinner"], [class*="spinner"], [class*="loading"]',
-  );
-  for (const el of Array.from(nodes)) {
-    if (!isVisible(el)) continue;
+function hasGeneratingIndicator(): boolean {
+  for (const el of visibleAll(INDICATOR_SELECTOR)) {
     const text = normalize(el.textContent ?? "");
-    if (text && GENERATING_PATTERNS.some((re) => re.test(text))) return true;
+    if (!text || text.length > MAX_INDICATOR_TEXT) continue;
+    if (GENERATING_PATTERNS.some((re) => re.test(text))) return true;
   }
   return false;
 }
 
-export function hasCustomWorkingIndicator(selectors: string[]): boolean {
-  for (const sel of selectors) {
-    if (!sel) continue;
-    try {
-      const el = document.querySelector<Element>(sel);
-      if (el && isVisible(el)) return true;
-    } catch {
-      // Bad selector from options: ignore, don't break the scan.
-    }
-  }
-  return false;
-}
-
-export function isWorking(selectors: string[]): boolean {
+export function isWorking(customSelectors: string[]): boolean {
   return (
-    hasStatusClassIndicator() ||
+    visibleAll(STATUS_WORKING_SELECTOR).length > 0 ||
     hasStopButton() ||
     hasGeneratingIndicator() ||
-    hasCustomWorkingIndicator(selectors)
+    visibleCustom(customSelectors).length > 0
   );
+}
+
+/** Visible "finished" status elements (includes historical ones). */
+export function finishedElements(): Element[] {
+  return visibleAll(STATUS_FINISHED_SELECTOR);
 }

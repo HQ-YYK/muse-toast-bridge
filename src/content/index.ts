@@ -1,53 +1,39 @@
 // Toast Bridge — content script for muse.ai.
 //
-// Orchestrates the two detectors (working / approval) and notifies the
-// background worker when:
-//   - a task finishes ("done"): a "working" indicator was visible for a while,
-//     then disappeared and stayed gone for a short settle period.
-//   - Muse waits for the user ("need"): an approval prompt appears.
+// Notifies the background worker when:
+//   - a task finishes ("done"): a working episode ends (indicator gone for
+//     SETTLE_MS), or a *new* finished-status bubble appears.
+//   - Muse waits for the user ("need"): a *new* approval/decision prompt appears.
+//
+// "New" is the key idea. The chat history keeps every old finished bubble and
+// every answered decision card on screen, so "is any visible" is always true.
+// We remember every element we have already seen (WeakSet) and only react to
+// elements that were not there before. On page load, on conversation switch,
+// and after re-enabling, the current DOM is taken as a silent baseline.
 
 import { DEFAULT_SETTINGS, type Settings } from "../shared/settings";
-import { findApproval } from "./approval";
-import { hasFinishedStatus, isWorking } from "./working";
+import { approvalCandidates } from "./approval";
+import { finishedElements, isWorking } from "./working";
 
 (() => {
   if (window.__toastBridgeLoaded) return;
   window.__toastBridgeLoaded = true;
 
-  let settings: Settings = { ...DEFAULT_SETTINGS };
+  const SETTLE_MS = 2000; // idle must persist this long before "done"
+  const SCAN_THROTTLE_MS = 300;
+  const APPROVAL_COOLDOWN_MS = 30000;
+  // A finished bubble arriving this soon after an episode closed belongs to
+  // that episode (already handled), not to a new task.
+  const BUBBLE_GRACE_MS = 15000;
 
-  try {
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
-      settings = { ...DEFAULT_SETTINGS, ...items } as Settings;
-    });
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== "sync") return;
-      for (const [key, change] of Object.entries(changes)) {
-        (settings as unknown as Record<string, unknown>)[key] = change.newValue;
-      }
-    });
-  } catch {
-    // Storage unavailable (e.g. in tests): keep defaults.
-  }
-
-  // Approval notifications are rate-limited: at most one per 30s.
-  let lastApprovalAt = 0;
-
-  // Dedup guards: a single finished bubble / approval prompt fires ONCE, not
-  // once per scan. We reset these only when the trigger goes away and comes
-  // back (a genuinely new task), so a persistent bubble can't re-fire forever.
-  let doneFiredForCurrentFinished = false;
-  let approvalFiredForCurrentPrompt = false;
-
-  // Debug logging: flips on with a `?tbdebug` query on the muse page, or by
-  // setting localStorage.__tbDebug = "1". Logs every state change so we can
-  // tell "not detected" apart from "detected but suppressed by shouldNotify".
   const DEBUG =
     location.search.includes("tbdebug") ||
     (typeof localStorage !== "undefined" && localStorage.getItem("__tbDebug") === "1");
   function dbg(...args: unknown[]): void {
     if (DEBUG) console.log("[toast-bridge]", ...args);
   }
+
+  let settings: Settings = { ...DEFAULT_SETTINGS };
 
   function shouldNotify(): boolean {
     if (!settings.enabled) return false;
@@ -56,132 +42,176 @@ import { hasFinishedStatus, isWorking } from "./working";
   }
 
   function notify(kind: "done" | "need", title: string, body: string): void {
-    if (!shouldNotify()) return;
+    if (!shouldNotify()) {
+      dbg("suppressed (tab focused)", kind);
+      return;
+    }
     try {
-      chrome.runtime.sendMessage({
-        type: "toast-bridge-notify",
-        kind,
-        title,
-        body,
-      });
+      chrome.runtime.sendMessage({ type: "toast-bridge-notify", kind, title, body });
     } catch {
-      // Background worker unreachable: nothing we can do from here.
+      // Extension reloaded / worker unreachable: nothing we can do from here.
     }
   }
 
-  // --- state machine -----------------------------------------------------
+  // --- state -------------------------------------------------------------
+  let seen = new WeakSet<Element>();
+  let needBaseline = true;
+  let lastPath = location.pathname;
+
   let working = false;
-  let workingSince = 0;
-  let settleTimer: number | null = null;
-  const SETTLE_MS = 2000; // idle must persist 2s before we call it "done"
+  let workingSince = 0; // 0 = no open working episode
+  let idleSince = 0;
+  let lastApprovalAt = 0;
+  let lastEpisodeEndAt = 0;
 
-  // A task can finish two ways:
-  //   1. working → idle (stop button / spinner gone) — the "done" edge below.
-  //   2. an explicit "finished" status bubble appears (status-success etc.).
-  // We track a finishedSince so case 2 can also fire "done" after it settles.
-  let finishedSince = 0;
+  /** Returns the elements in `els` not seen before, and marks all as seen. */
+  function takeNew(els: Element[]): Element[] {
+    const fresh = els.filter((el) => !seen.has(el));
+    for (const el of fresh) seen.add(el);
+    return fresh;
+  }
 
-  function fireDone(ranSeconds: number): void {
-    dbg("fireDone", { ranSeconds });
-    if (
-      settings.notifyDone &&
-      ranSeconds >= (settings.minWorkingSeconds || 0)
-    ) {
-      notify(
-        "done",
-        "Muse finished",
-        `Muse finished a task in "${document.title || "Muse"}".`,
-      );
-    }
+  function baseline(): void {
+    seen = new WeakSet();
+    takeNew(finishedElements());
+    takeNew(approvalCandidates(settings.approvalSelectors));
+    working = isWorking(settings.workingSelectors);
+    workingSince = working ? Date.now() : 0;
+    idleSince = 0;
+    needBaseline = false;
+    dbg("baseline taken", { working });
+  }
+
+  function fireDone(ranSeconds: number | null): void {
+    workingSince = 0; // close the episode so it can't fire twice
+    lastEpisodeEndAt = Date.now();
+    dbg("done", { ranSeconds });
+    if (!settings.notifyDone) return;
+    // Unknown duration (finished bubble with no observed working phase):
+    // notify, since only agent tasks render a status bubble.
+    if (ranSeconds !== null && ranSeconds < (settings.minWorkingSeconds || 0)) return;
+    notify("done", "Muse finished", `Muse finished a task in "${document.title || "Muse"}".`);
   }
 
   function scan(): void {
-    if (!settings.enabled) return;
+    if (!settings.enabled) {
+      needBaseline = true;
+      return;
+    }
+    if (location.pathname !== lastPath) {
+      lastPath = location.pathname;
+      needBaseline = true;
+    }
+    if (needBaseline) {
+      baseline();
+      return;
+    }
 
-    const nowWorking = isWorking(settings.workingSelectors);
-    const nowFinished = hasFinishedStatus();
+    const now = Date.now();
 
-    if (nowWorking && !working) {
-      working = true;
-      workingSince = Date.now();
-      finishedSince = 0;
-      dbg("working started");
-      if (settleTimer !== null) {
-        clearTimeout(settleTimer);
-        settleTimer = null;
+    // 1. Working episode: open on idle -> working, close after SETTLE_MS idle.
+    if (isWorking(settings.workingSelectors)) {
+      if (!working) {
+        working = true;
+        workingSince = workingSince || now;
+        dbg("working started");
       }
-    } else if (!nowWorking && working && settleTimer === null) {
-      settleTimer = window.setTimeout(() => {
-        settleTimer = null;
-        if (isWorking(settings.workingSelectors)) return; // restarted
+      idleSince = 0;
+    } else if (working) {
+      if (idleSince === 0) {
+        idleSince = now;
+        // One-off timer (not chained), so background-tab throttling keeps it
+        // near 1s precision; the timestamp check below is what decides.
+        setTimeout(scan, SETTLE_MS + 50);
+      } else if (now - idleSince >= SETTLE_MS) {
         working = false;
-        const ranSeconds = (Date.now() - workingSince) / 1000;
-        dbg("working stopped", { ranSeconds });
-        fireDone(ranSeconds);
-      }, SETTLE_MS);
+        if (workingSince) fireDone((idleSince - workingSince) / 1000);
+        idleSince = 0;
+      }
     }
 
-    // Explicit "finished" bubble (case 2): start timing when a finished status
-    // appears while we aren't already "working", and fire once after settle.
-    if (nowFinished && !working) {
-      if (finishedSince === 0) {
-        finishedSince = Date.now();
-        dbg("finished status seen");
-      }
-      const ranSeconds = (Date.now() - finishedSince) / 1000;
-      // Fire after the finished bubble has been visible for a settle period,
-      // but only once per finished bubble (guard prevents an infinite loop).
-      if (ranSeconds >= SETTLE_MS / 1000 && !doneFiredForCurrentFinished) {
-        doneFiredForCurrentFinished = true;
-        fireDone(ranSeconds);
-      }
-    } else if (!nowFinished) {
-      finishedSince = 0;
-      doneFiredForCurrentFinished = false;
-    }
-
-    if (settings.notifyApproval) {
-      const now = Date.now();
-      if (findApproval(settings.approvalSelectors)) {
-        // A prompt is visible. Fire once per prompt; only re-arm after the
-        // prompt disappears and a *new* one shows up.
-        if (!approvalFiredForCurrentPrompt && now - lastApprovalAt >= 30000) {
-          approvalFiredForCurrentPrompt = true;
-          lastApprovalAt = now;
-          dbg("approval detected");
-          notify(
-            "need",
-            "Muse is waiting for you",
-            "Muse needs your approval or an answer before it can continue.",
-          );
-        }
+    // 2. A new finished bubble while idle reports a task whose working phase
+    //    we never saw (e.g. inside a collapsed container). While working,
+    //    step bubbles ("已完成 · 某一步") are ignored: the episode end above
+    //    reports the task once. Bubbles right after an episode are its own.
+    if (takeNew(finishedElements()).length > 0) {
+      if (working) {
+        dbg("finished bubble during work (step), ignored");
+      } else if (now - lastEpisodeEndAt >= BUBBLE_GRACE_MS) {
+        fireDone(null);
       } else {
-        approvalFiredForCurrentPrompt = false;
+        dbg("finished bubble belongs to the episode just closed");
+      }
+    }
+
+    // 3. New approval / decision prompt.
+    const freshApproval = takeNew(approvalCandidates(settings.approvalSelectors));
+    if (freshApproval.length > 0 && settings.notifyApproval) {
+      dbg("new approval prompt", freshApproval);
+      if (now - lastApprovalAt >= APPROVAL_COOLDOWN_MS) {
+        lastApprovalAt = now;
+        notify(
+          "need",
+          "Muse is waiting for you",
+          "Muse needs your approval or an answer before it can continue.",
+        );
       }
     }
   }
 
-  // Observe DOM changes (throttled) plus a 1s interval fallback.
-  let scanQueued = false;
+  // Leading-edge throttle driven by DOM mutations. Mutation callbacks are not
+  // throttled in background tabs the way timers are, so this keeps detection
+  // prompt while the Muse tab is hidden.
+  let lastScanAt = 0;
+  let trailingQueued = false;
   function queueScan(): void {
-    if (scanQueued) return;
-    scanQueued = true;
-    setTimeout(() => {
-      scanQueued = false;
+    const now = Date.now();
+    if (now - lastScanAt >= SCAN_THROTTLE_MS) {
+      lastScanAt = now;
       scan();
-    }, 300);
+    } else if (!trailingQueued) {
+      trailingQueued = true;
+      setTimeout(() => {
+        trailingQueued = false;
+        lastScanAt = Date.now();
+        scan();
+      }, SCAN_THROTTLE_MS);
+    }
   }
 
-  const observer = new MutationObserver(queueScan);
-  if (document.body) {
+  function start(): void {
+    const observer = new MutationObserver(queueScan);
     observer.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["aria-label", "title", "disabled", "class", "data-testid"],
     });
+    setInterval(scan, 1000);
+    scan();
+    dbg("started; settings =", settings);
   }
-  setInterval(scan, 1000);
-  scan();
-  dbg("loaded; settings =", settings, "; onlyWhenHidden =", settings.onlyWhenHidden);
+
+  // Load settings first, then start, so the first baseline uses real settings.
+  try {
+    chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
+      settings = { ...DEFAULT_SETTINGS, ...items } as Settings;
+      start();
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "sync") return;
+      const s = settings as unknown as Record<string, unknown>;
+      const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+      for (const [key, change] of Object.entries(changes)) {
+        s[key] = change.newValue === undefined ? defaults[key] : change.newValue;
+      }
+      // Selectors changed: re-baseline so matches already on screen stay quiet.
+      if ("workingSelectors" in changes || "approvalSelectors" in changes) {
+        needBaseline = true;
+      }
+    });
+  } catch {
+    // Storage unavailable (e.g. in tests): run with defaults.
+    start();
+  }
 })();
