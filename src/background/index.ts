@@ -14,17 +14,13 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// notificationId -> tabId, so a click can focus the right tab.
-const tabByNotification = new Map<string, number>();
-
 function showNotification(
   kind: "done" | "need",
   title: string,
   body: string,
   tabId?: number,
 ): void {
-  const id = `tb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  if (tabId !== undefined) tabByNotification.set(id, tabId);
+  const id = `tb-${tabId ?? "x"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   chrome.notifications.create(id, {
     type: "basic",
     iconUrl: chrome.runtime.getURL("icons/icon128.png"),
@@ -59,18 +55,21 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 });
 
 chrome.notifications.onClicked.addListener((id) => {
-  const tabId = tabByNotification.get(id);
-  if (tabId !== undefined) {
+  const tabIdPart = id.split("-")[1];
+  const tabId = Number(tabIdPart);
+  if (Number.isInteger(tabId) && tabId >= 0) {
     chrome.tabs.update(tabId, { active: true }, (tab) => {
+      if (chrome.runtime.lastError) {
+        return;
+      }
       if (tab && tab.windowId !== undefined) {
-        chrome.windows.update(tab.windowId, { focused: true });
+        chrome.windows.update(tab.windowId, { focused: true }, () => {
+          if (chrome.runtime.lastError) {
+            // Window may have closed before the focus update.
+          }
+        });
       }
     });
   }
   chrome.notifications.clear(id);
-  tabByNotification.delete(id);
-});
-
-chrome.notifications.onClosed.addListener((id) => {
-  tabByNotification.delete(id);
 });
