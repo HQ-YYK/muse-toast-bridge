@@ -25,6 +25,9 @@ import { finishedElements, isWorking } from "./working";
   // A finished bubble arriving this soon after an episode closed belongs to
   // that episode (already handled), not to a new task.
   const BUBBLE_GRACE_MS = 15000;
+  // "Done" right after a "waiting" alert is the same event (Muse finished by
+  // asking you to choose); the waiting alert already covers it.
+  const DONE_AFTER_APPROVAL_MS = 15000;
 
   // `?tbdebug` once turns debug on for this origin (sticky in localStorage),
   // so it survives navigation that drops the query; `?tbdebug=0` turns it off.
@@ -83,6 +86,20 @@ import { finishedElements, isWorking } from "./working";
     return fresh;
   }
 
+  /**
+   * True if the newest match (last in document order) is one we have not seen.
+   * Muse virtualizes the chat list: scrolling up re-mounts old messages as new
+   * DOM nodes. Those are never the last match, so they stay quiet.
+   */
+  function latestIsNew(els: Element[]): boolean {
+    const sorted = [...els].sort((a, b) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+    const last = sorted[sorted.length - 1];
+    const fresh = takeNew(sorted);
+    return last !== undefined && fresh.includes(last);
+  }
+
   function baseline(): void {
     seen = new WeakSet();
     takeNew(finishedElements());
@@ -102,6 +119,10 @@ import { finishedElements, isWorking } from "./working";
     // Unknown duration (finished bubble with no observed working phase):
     // notify, since only agent tasks render a status bubble.
     if (ranSeconds !== null && ranSeconds < (settings.minWorkingSeconds || 0)) return;
+    if (lastApprovalAt && Date.now() - lastApprovalAt < DONE_AFTER_APPROVAL_MS) {
+      dbg("done merged into the waiting alert just sent");
+      return;
+    }
     notify("done", "Muse finished", `Muse finished a task in "${document.title || "Muse"}".`);
   }
 
@@ -146,7 +167,7 @@ import { finishedElements, isWorking } from "./working";
     //    we never saw (e.g. inside a collapsed container). While working,
     //    step bubbles ("已完成 · 某一步") are ignored: the episode end above
     //    reports the task once. Bubbles right after an episode are its own.
-    if (takeNew(finishedElements()).length > 0) {
+    if (latestIsNew(finishedElements())) {
       if (working) {
         dbg("finished bubble during work (step), ignored");
       } else if (now - lastEpisodeEndAt >= BUBBLE_GRACE_MS) {
@@ -157,9 +178,8 @@ import { finishedElements, isWorking } from "./working";
     }
 
     // 3. New approval / decision prompt.
-    const freshApproval = takeNew(approvalCandidates(settings.approvalSelectors));
-    if (freshApproval.length > 0 && settings.notifyApproval) {
-      dbg("new approval prompt", freshApproval);
+    if (latestIsNew(approvalCandidates(settings.approvalSelectors)) && settings.notifyApproval) {
+      dbg("new approval prompt");
       if (now - lastApprovalAt >= APPROVAL_COOLDOWN_MS) {
         lastApprovalAt = now;
         notify(
