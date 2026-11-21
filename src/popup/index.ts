@@ -25,20 +25,11 @@ for (const id of ["enabled", "notifyDone", "notifyApproval"]) {
   $(id).addEventListener("change", save);
 }
 $("test").addEventListener("click", () => {
-  try {
-    const response = chrome.runtime.sendMessage({ type: "toast-bridge-test" }, () => {
-      if (chrome.runtime.lastError) {
-        console.error("toast-bridge test notify failed:", chrome.runtime.lastError.message);
-      }
-    }) as unknown;
-    if (response && typeof (response as Promise<unknown>).catch === "function") {
-      (response as Promise<unknown>).catch((error) => {
-        console.error("toast-bridge test notify failed:", error);
-      });
+  chrome.runtime.sendMessage({ type: "toast-bridge-test" }, () => {
+    if (chrome.runtime.lastError) {
+      console.error("toast-bridge test notify failed:", chrome.runtime.lastError.message);
     }
-  } catch (error) {
-    console.error("toast-bridge test notify failed:", error);
-  }
+  });
 });
 $("options").addEventListener("click", () => {
   chrome.runtime.openOptionsPage();

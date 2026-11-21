@@ -26,9 +26,21 @@ import { finishedElements, isWorking } from "./working";
   // that episode (already handled), not to a new task.
   const BUBBLE_GRACE_MS = 15000;
 
-  const DEBUG =
-    location.search.includes("tbdebug") ||
-    (typeof localStorage !== "undefined" && localStorage.getItem("__tbDebug") === "1");
+  // `?tbdebug` once turns debug on for this origin (sticky in localStorage),
+  // so it survives navigation that drops the query; `?tbdebug=0` turns it off.
+  const debugParam = new URLSearchParams(location.search).get("tbdebug");
+  try {
+    if (debugParam === "0") localStorage.removeItem("__tbDebug");
+    else if (debugParam !== null) localStorage.setItem("__tbDebug", "1");
+  } catch {
+    // localStorage blocked: fall back to the query param only.
+  }
+  let DEBUG = debugParam !== null && debugParam !== "0";
+  try {
+    DEBUG = DEBUG || localStorage.getItem("__tbDebug") === "1";
+  } catch {
+    // ignore
+  }
   function dbg(...args: unknown[]): void {
     if (DEBUG) console.log("[toast-bridge]", ...args);
   }
@@ -189,7 +201,7 @@ import { finishedElements, isWorking } from "./working";
     });
     setInterval(scan, 1000);
     scan();
-    dbg("started; settings =", settings);
+    dbg("started", { url: location.href, topFrame: window === window.top, settings });
   }
 
   // Load settings first, then start, so the first baseline uses real settings.

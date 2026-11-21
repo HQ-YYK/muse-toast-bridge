@@ -35,7 +35,7 @@ function showNotification(
   });
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const m = msg as { type?: string; kind?: string; title?: string; body?: string };
   if (m && m.type === "toast-bridge-notify") {
     showNotification(
@@ -51,6 +51,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       "Test notification — if you see this, the extension works.",
       sender.tab?.id,
     );
+    // Reply so the caller's callback doesn't see "message port closed".
+    sendResponse({ ok: true });
   }
 });
 
