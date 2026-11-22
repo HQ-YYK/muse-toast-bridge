@@ -29,6 +29,7 @@ bundle. Build output goes to `dist/`, which is what you "Load unpacked".
 | `src/options/` | Options page |
 | `icons/` | Extension icons |
 | `scripts/zip.mjs` | Build a distributable zip |
+| `tasks/` | Task briefs for Copilot (Agent mode) |
 | `legacy/` | The original flat-file version (kept for reference) |
 
 ## Develop
@@ -48,27 +49,44 @@ unpacked** → select the `dist/` folder.
 
 ## How it detects things
 
-Detection is heuristic on purpose — it does not depend on Muse's internal class
-names, which change without notice. Two signals:
-
-- **Task finished** — while Muse works, the composer's send button is replaced
-  by a **Stop / "Stop generating"** button, and a generating/spinner indicator
-  may be visible. The extension watches for that; when it has been visible for
-  a while and then disappears (and stays gone 2s), the task is done.
-- **Waiting for you** — Muse shows a decision card with buttons like **Allow /
-  Ask / Deny / "Allow once" / "Always allow" / "Allow for this task"**, or the
-  Chinese equivalents (允许 / 允许一次 / 总是允许此站点 / 审核 …). A visible
-  approval button or an alert/decision dialog triggers the "waiting" ping.
+- **Working** — the extension recognizes a visible element whose class contains
+  `status-working`, plus `status-running`, `status-thinking`,
+  `status-generating`, or `status-in-progress`. For older layouts, it also
+  recognizes a Stop / "Stop generating" / 停止 button, or spinner/status text
+  shorter than 30 characters (such as "Thinking…" or 生成中).
+- **Finished** — after a working period ends and the page stays idle for 2
+  seconds, the extension reports one completion with the real duration of the
+  working period. `status-success` step bubbles that appear during work are
+  ignored. A new `status-success` bubble that appears while idle (for example,
+  when no work phase was observed because it was collapsed) reports one
+  completion as well.
+- **Waiting for you** — the extension recognizes a card when a
+  `data-copy-exclude` container contains at least two `border-dashed` option
+  buttons, or when the button text is an approval phrase such as Allow, Allow
+  once, Always allow, Allow for this task, 允许, 允许一次, or 总是允许. It no
+  longer matches Confirm, Ask, Deny, 确认, or 拒绝, and it does not match
+  arbitrary `role="dialog"` elements.
+- **Only new things count** — chat history retains old bubbles and answered
+  cards. After page load, conversation switches, or selector changes, the
+  extension records the elements currently on the page as a baseline. It only
+  reacts to new elements that are the lowest matching element of their kind on
+  the page. Muse may remount old messages as the chat list scrolls, but the
+  lowest-element rule prevents false reports.
+- A waiting notification is merged with a done notification that arrives within
+  15 seconds, so only the waiting alert remains.
 
 Only tasks that ran at least 15 seconds notify, so short replies stay quiet. By
-default it only pops when the Muse tab is **not** in focus. Both are adjustable.
+default it only pops when the Muse tab is **not** in focus. Both are adjustable
+on the options page.
 
 If a Muse redesign breaks detection, add your own CSS selectors on the options
 page ("Extra 'Muse is working' selectors" / "Extra 'Muse is waiting'
 selectors") instead of waiting for a release.
 
 Clicking a notification focuses the Muse tab it came from. Approval
-notifications stay on screen until you dismiss them.
+notifications stay on screen until you dismiss them. The tab ID is encoded in
+the notification ID, so clicking one still works after the browser recycles the
+Service Worker.
 
 ## Why not the Muse API?
 
@@ -78,6 +96,27 @@ is no supported way for an extension to poll task state without reimplementing
 that protocol, so this extension stays purely DOM-based. (For reference, the
 `Muse-Chat-MCP` project drives a real logged-in Chrome via Playwright for the
 same reason.)
+
+## Debugging
+
+Open `https://muse.ai/?tbdebug` once to enable debug logging. The setting is
+stored in that site's localStorage, so it remains enabled while navigating
+between pages on the site. Open `https://muse.ai/?tbdebug=0` to disable it.
+
+In the browser console, filter by `toast-bridge` to show only extension logs.
+The log keys have these meanings:
+
+- `started` — the content script has initialized.
+- `baseline taken` — existing page elements were recorded as the baseline.
+- `working started` — Muse started a working period.
+- `done` — a working period ended and completion was detected.
+- `finished bubble during work (step), ignored` — a success step bubble appeared
+  during work and was ignored.
+- `new approval prompt` — a new waiting-for-you prompt was detected.
+- `done merged into the waiting alert just sent` — a done notification arrived
+  within 15 seconds and was merged into the waiting alert.
+- `suppressed (tab focused)` — a notification was not shown because the Muse
+  tab was in focus.
 
 ## Settings
 
