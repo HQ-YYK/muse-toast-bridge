@@ -109,12 +109,13 @@ The log keys have these meanings:
 - `started` — the content script has initialized.
 - `baseline taken` — existing page elements were recorded as the baseline.
 - `working started` — Muse started a working period.
-- `done` — a working period ended and completion was detected.
+- `done` — a task finished. Logged even when the run was shorter than the
+  minimum length; only longer runs notify.
 - `finished bubble during work (step), ignored` — a success step bubble appeared
   during work and was ignored.
 - `new approval prompt` — a new waiting-for-you prompt was detected.
-- `done merged into the waiting alert just sent` — a done notification arrived
-  within 15 seconds and was merged into the waiting alert.
+- `done merged into the waiting alert just sent` — the task finished within
+  15 seconds of a waiting alert, so no separate done notification was shown.
 - `suppressed (tab focused)` — a notification was not shown because the Muse
   tab was in focus.
 
